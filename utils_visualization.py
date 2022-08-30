@@ -12,11 +12,10 @@ def group_boxplot(data_group1, data_group2,labels_list,title,legend:list):
     xlocations  = range(len(data_group1))
     width = 0.3
     symbol= 'r+'
-    ymin= 0
-    ymax= 10
+
 
     ax = plt.gca()
-    #ax.set_ylim(ymin,ymax)
+
     ax.set_xticklabels( labels_list, rotation=0)
     ax.grid(True, linestyle='dotted')
     ax.set_axisbelow(True)

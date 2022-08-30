@@ -173,7 +173,7 @@ def fit_comp(X: np.ndarray, R=None, lr=0.001, n_epochs=1000,want_bias=False):
         pre_train_matrices[2],
         X[0], X[1],bias=want_bias
     )
-    print(pre_train_loss)
+
 
     model.train()
 
@@ -188,6 +188,7 @@ def fit_comp(X: np.ndarray, R=None, lr=0.001, n_epochs=1000,want_bias=False):
     matrices_all = []
     matrices_all.append(pre_train_matrices)
     results = []
+    results.append(pre_train_result)
     for e in trange(n_epochs):
         optimizer.zero_grad()
         hidden, result, matrices = model(X)
