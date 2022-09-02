@@ -95,6 +95,7 @@ class CompModel(Module):
                 PT.orthogonal(VV),
                 "weight",
                 Sphere(dim=-1))
+
             after_weight=self.V.weight.detach().numpy()
 
 
