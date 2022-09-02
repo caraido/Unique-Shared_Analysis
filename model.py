@@ -1,11 +1,12 @@
 import numpy as np
 from tqdm import trange
+import warnings
 import torch
 import torch.nn as nn
 from torch.nn import Linear, Module
 import torch.nn.utils.parametrize as P
 import torch.nn.utils.parametrizations as PT
-
+from sklearn.decomposition import PCA, TruncatedSVD
 
 class Sphere(nn.Module):
     '''
@@ -38,13 +39,13 @@ def my_loss(x1v1, x1vs, x1v2, x2v1, x2vs, x2v2, V1, Vs, V2, original_X1, origina
     :return:
     '''
     V1_loss = torch.var(x1v1, unbiased=bias) - torch.var(x2v1, unbiased=bias)
-    Vs_loss = torch.var(x1vs, unbiased=bias) + torch.var(x2vs, unbiased=bias)
+    Vs_loss = torch.std(x1vs, unbiased=bias) * torch.std(x2vs, unbiased=bias)
     V2_loss = torch.var(x2v2, unbiased=bias) - torch.var(x1v2, unbiased=bias)
 
     #X1_MSE = torch.mean(torch.square(x1v1 @ V1.T + x1vs @ Vs.T - original_X1))
     #X2_MSE = torch.mean(torch.square(x2v2 @ V2.T + x2vs @ Vs.T - original_X2))
 
-    loss = -(V1_loss + V2_loss + 0.5 * Vs_loss)# + (X1_MSE + X2_MSE)
+    loss = -(V1_loss + V2_loss + 1 * Vs_loss)# + (X1_MSE + X2_MSE)
     return loss
 
 
@@ -57,7 +58,7 @@ class CompModel(Module):
     # these latent results are used for further analysis
     # forward() method will generate x1v1 * V1.T, x1v2 * V2.T, x1vs * Vs.T, x2v1 * V1.T, x2vs * Vs.T, x2v2 * V2.T
     # Here V1.T is realized by taking the transpose of weight from linear layers V1. So are V2.T and Vs.T
-    def __init__(self, input_size, hidden_size,want_bias=False):
+    def __init__(self, input_size, hidden_size,want_bias=False,V_init=None):
         """
         Function that declares the model. Always in float64(double) precision
         Parameters
@@ -73,11 +74,29 @@ class CompModel(Module):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.want_bias=want_bias
+        self.V_init=V_init
         # here we create a V matrix to represent [v1,vs,v2]
         assert self.input_size > self.hidden_size
-        self.V = P.register_parametrization(
-            PT.orthogonal(Linear(self.input_size, self.hidden_size * 3, bias=self.want_bias, dtype=torch.double)), "weight",
-            Sphere(dim=-1))
+        assert V_init[0].shape==(self.input_size,self.hidden_size)
+
+
+        if self.V_init is not None:
+            self.V_init=np.concatenate(self.V_init,axis=1)
+            VV=Linear(self.input_size, self.hidden_size * 3, bias=self.want_bias, dtype=torch.double)
+            VV.weight=nn.Parameter(torch.DoubleTensor(self.V_init).T)
+            self.V=P.register_parametrization(PT.orthogonal(VV), "weight",Sphere(dim=-1))
+
+            original_weight=self.V_init.T # inspect this to make sure
+            after_weight=self.V.weight.detach().numpy()
+        else:
+            VV=Linear(self.input_size, self.hidden_size * 3, bias=self.want_bias, dtype=torch.double)
+            original_weight = VV.weight.detach().numpy()
+            self.V = P.register_parametrization(
+                PT.orthogonal(VV),
+                "weight",
+                Sphere(dim=-1))
+            after_weight=self.V.weight.detach().numpy()
+
 
     def forward(self, x):
         """
@@ -125,7 +144,253 @@ class CompModel(Module):
         return hidden, output, matrices
 
 
-def fit_comp(X: np.ndarray, R=None, lr=0.001, n_epochs=1000,want_bias=False):
+class LatentVariables:
+    def __init__(self,hidden):
+        self.x1v1 = [z[0][0].detach().numpy() for z in hidden]
+        self.x1vs = [z[0][1].detach().numpy() for z in hidden]
+        self.x1v2 = [z[0][2].detach().numpy() for z in hidden]
+        self.x2v1 = [z[1][0].detach().numpy() for z in hidden]
+        self.x2vs = [z[1][1].detach().numpy() for z in hidden]
+        self.x2v2 = [z[1][2].detach().numpy() for z in hidden]
+
+        self.var_x1v1=[np.var(h) for h in self.x1v1]
+        self.var_x1vs = [np.var(h) for h in self.x1vs]
+        self.var_x1v2 = [np.var(h) for h in self.x1v2]
+        self.var_x2v1 = [np.var(h) for h in self.x2v1]
+        self.var_x2vs = [np.var(h) for h in self.x2vs]
+        self.var_x2v2 = [np.var(h) for h in self.x2v2]
+
+
+class Reconstructed:
+    def __init__(self,reconstructed):
+        #((x1v1v1, x1vsvs, x1v2v2), (x2v1v1, x2vsvs, x2v2v2))
+        self.X1V1V1=[r[0][0].detach().numpy() for r in reconstructed]
+        self.X1VsVs = [r[0][1].detach().numpy() for r in reconstructed]
+        self.X1V2V2 = [r[0][2].detach().numpy() for r in reconstructed]
+        self.X2V1V1 = [r[1][0].detach().numpy() for r in reconstructed]
+        self.X2VsVs = [r[1][1].detach().numpy() for r in reconstructed]
+        self.X2V2V2 = [r[1][2].detach().numpy() for r in reconstructed]
+
+        self.X1 = [self.X1VsVs[i]+self.X1V1V1[i] for i in
+                                 range(len(reconstructed))]
+        self.X2 = [self.X2VsVs[i]+self.X2V2V2[i] for i in
+                                 range(len(reconstructed))]
+
+        self.var_X1V1V1 = [np.var(r) for r in self.X1V1V1]
+        self.var_X1VsVs = [np.var(r) for r in self.X1VsVs]
+        self.var_X1V2V2 = [np.var(r) for r in self.X1V2V2]
+        self.var_X2V1V1 = [np.var(r) for r in self.X2V1V1]
+        self.var_X2VsVs = [np.var(r) for r in self.X2VsVs]
+        self.var_X2V2V2 = [np.var(r) for r in self.X2V2V2]
+
+        self.var_X1=[np.var(r) for r in self.X1]
+        self.var_X2 = [np.var(r) for r in self.X2]
+
+
+class TransitionMat:
+    def __init__(self,mat):
+        #(V1_weight, Vs_weight, V2_weight)
+        self.V1=[v[0].detach().numpy() for v in mat]
+        self.Vs = [v[1].detach().numpy() for v in mat]
+        self.V2 = [v[2].detach().numpy() for v in mat]
+
+class Initialization:
+    def __init__(self,method=None):
+        self._method=None
+        self.method=method
+        self.V=None
+
+    @property
+    def method(self):
+        return self._method
+    @method.setter
+    def method(self,method):
+        if method is not None and method !='iter':
+            raise ValueError('method can only be None or iter for now')
+
+
+class UniqueSharedAnalysis:
+
+    def __init__(self,hidden_size):
+        self._hidden_size=None
+        self._raw_data=None
+        self._raw_data_size=None
+        self._lr=None
+        self._n_epochs=None
+        self._want_bias=None
+        self._want_stats=False
+        self.initialization=Initialization()
+
+        self.run = False
+        self.hidden_size=hidden_size
+        self.losses=None
+        self.latent_variables=None
+        self.reconstructed=None
+        self.transition_mat=None
+        self.model=None
+        self.X1=None
+        self.X2=None
+
+    def initialize(self,data,method='iter'):
+        '''test this on the fake data before proceed'''
+        if self.check_format(data) and method=='iter':
+            self.initialization.method=method
+
+            X1=data[0]
+            X2=data[1]
+
+            V1=[]
+            Vs=[]
+            V2=[]
+            svd = TruncatedSVD(n_components=self.hidden_size)
+
+            pick=1
+            for i in range(3*self.hidden_size):
+                if pick==1:
+                    svd.fit(X1)
+                else:
+                    svd.fit(X2)
+                pick*=-1
+                W=svd.components_[0,None].T
+                X1 = X1 - X1 @ W @ W.T
+                X2 = X2 - X2 @ W @ W.T
+                V1_pref=np.var(X1@W)-np.var(X2@W)
+                Vs_pref=np.std(X1@W)*np.std(X2@W)
+                #Vs_pref=(np.var(X1@W) + np.var(X2@W))/2
+                V2_pref=np.var(X2@W)-np.var(X1@W)
+
+                max_ind=np.argmax([V1_pref,Vs_pref,V2_pref])
+                if max_ind==0 and len(V1)<self.hidden_size:
+                    V1.append(np.squeeze(W))
+                elif max_ind==1 and len(Vs)<self.hidden_size:
+                    Vs.append(np.squeeze(W))
+                elif max_ind==2 and len(V2)<self.hidden_size:
+                    V2.append(np.squeeze(W))
+                elif max_ind==0 and len(V1)==self.hidden_size:
+                    max_ind=np.argmax([Vs_pref,V2_pref])
+                    if max_ind==0:
+                        Vs.append(np.squeeze(W))
+                    elif max_ind==1:
+                        Vs.append(np.squeeze(W))
+                elif max_ind==1 and len(Vs)==self.hidden_size:
+                    max_ind=np.argmax([V1_pref,V2_pref])
+                    if max_ind==0:
+                        V1.append(np.squeeze(W))
+                    elif max_ind==1:
+                        Vs.append(np.squeeze(W))
+                elif max_ind==2 and len(V2)==self.hidden_size:
+                    max_ind=np.argmax([V1_pref,Vs_pref])
+                    if max_ind==0:
+                        V1.append(np.squeeze(W))
+                    elif max_ind==1:
+                        Vs.append(np.squeeze(W))
+                else:
+                    raise Exception("how did you get this far?")
+
+            V1=np.array(V1).T
+            Vs=np.array(Vs).T
+            V2=np.array(V2).T
+            # check orthogonality here
+            assert  np.sum(V1.T@V1-np.eye(self.hidden_size))<10e-10
+            assert np.sum(V2.T @ V2 - np.eye(self.hidden_size))<10e-10
+            assert np.sum(Vs.T @ Vs - np.eye(self.hidden_size))<10e-10
+            assert np.sum(V2.T @ V1 )<10e-10
+            assert np.sum(Vs.T @ V1) < 10e-10
+            assert np.sum(V2.T @ Vs) < 10e-10
+
+            self.initialization.V=[V1,Vs,V2]
+
+    def fit(self, data,lr=0.001, n_epochs=1000,want_bias=False,want_stats=True):
+        # check the format of the data
+        if self.check_format(data):
+            self._raw_data=data
+            self.X1=data[0]
+            self.X2=data[1]
+            self._lr=lr
+            self._n_epochs=n_epochs
+            self._want_bias=want_bias
+            self._want_stats=want_stats
+
+            print("#### before training ###\n")
+            print(f"For X1 --- mean: {np.mean(self.X1):.2f}, variance: {np.var(self.X1):.2f}\nFor X2 --- mean: {np.mean(self.X2):.2f}, variance: {np.var(self.X2):.2f}\n")
+
+            loss, hidden, reconstructed, matrices, model = fit_comp(self._raw_data, V_init=self.initialization.V,R=self.hidden_size, lr=self._lr, n_epochs=self._n_epochs,
+                                                                    want_bias=self._want_bias)
+            self.run=True
+
+            self.losses=loss
+            self.latent_variables=LatentVariables(hidden)
+            del hidden # to save the memory
+            self.reconstructed=Reconstructed(reconstructed)
+            del reconstructed # to save the memory
+            self.transition_mat=TransitionMat(matrices)
+            del matrices # to save the memory
+            self.model=model
+
+            if self._want_stats:
+                self._calculate_stats()
+
+            print(f"Original total loss:{loss[0]:.2f}. ")
+            print('### after training ###')
+            print(f"Last epoch total loss:{loss[-1]:.2f}. ")
+        else:
+            raise Exception("input data should be a 3 dimensional ndarray/tensor with first D=2 .")
+
+    @property
+    def hidden_size(self):
+        return self._hidden_size
+
+    @hidden_size.setter
+    def hidden_size(self, new_hidden_size):
+        if self.run:
+            self._hidden_size=new_hidden_size
+            loss, hidden, reconstructed, matrices, model = fit_comp(self._raw_data, R=self.hidden_size, lr=self._lr, n_epochs=self._n_epochs,
+                                                                    want_bias=self._want_bias)
+            self.losses = loss
+            self.latent_variables = LatentVariables(hidden)
+            self.reconstructed = Reconstructed(reconstructed)
+            self.transition_mat = TransitionMat(matrices)
+            self.model = model
+            if self._want_stats:
+                self._calculate_stats()
+        else:
+            self._hidden_size=new_hidden_size
+
+    def check_format(self,data):
+        if isinstance(data,np.ndarray):
+            size=data.shape
+            if size[0]==2 and len(size)==3:
+                self.raw_data_size=size
+                return True
+            else: return False
+        elif isinstance(data,torch.Tensor):
+            size=data.size()
+            if size[0]==2 and len(size)==3:
+                self.raw_data_size=size
+                data=data.detach().numpy()
+                warnings.warn(f"Preferred numpy array data type but got {data.type()}. Now transforming to numpy array")
+                return True
+            else: return False
+        else: return False
+
+    def _calculate_stats(self):
+        # input reconstruction
+        self.reconstruction_X1=self.reconstructed.X1
+        self.reconstruction_X2=self.reconstructed.X2
+        # pearson correlation
+        self.X1_pearson_corr=[np.corrcoef(self.reconstruction_X1[i].flatten(),self.X1.flatten()) for i in range(self._n_epochs+1)]
+        self.X2_pearson_corr=[np.corrcoef(self.reconstruction_X2[i].flatten(),self.X2.flatten()) for i in range(self._n_epochs+1)]
+
+        # reconstruction error
+        self.X1_recon_MSE=[np.mean(np.square(self.reconstruction_X1[i]-self.X1)) for i in range(self._n_epochs+1)]
+        self.X2_recon_MSE = [np.mean(np.square(self.reconstruction_X2[i] - self.X2)) for i in range(self._n_epochs+1)]
+
+    @property
+    def n_epochs(self):
+        return self._n_epochs
+
+
+def fit_comp(X: np.ndarray, R=None, V_init:list=None, lr=0.001, n_epochs=1000,want_bias=False):
     """
         Wrapper function for fitting the neural signal comparison model
         Parameters
@@ -134,6 +399,7 @@ def fit_comp(X: np.ndarray, R=None, lr=0.001, n_epochs=1000,want_bias=False):
 
         R: dimensionality of the latent (required)
            scalar
+        V_init: initialized V, need to check orthogonality
         lr: learning rate (optional)
            scalar
            Will default to 0.001
@@ -152,12 +418,21 @@ def fit_comp(X: np.ndarray, R=None, lr=0.001, n_epochs=1000,want_bias=False):
         model: the pytorch model that was fit
         """
     assert R is not None
+    if V_init is not None:
+        [V1,Vs,V2]= V_init
+        assert np.sum(V1@V1.T-np.eye(len(V1)))<10e-7 or np.sum(V1.T@V1-np.eye(len(V1.T)))<10e-7
+        assert np.sum(Vs@Vs.T-np.eye(len(Vs)))<10e-7 or np.sum(Vs.T@Vs-np.eye(len(Vs.T)))<10e-7
+        assert np.sum(V2@V1.T-np.eye(len(V2)))<10e-7 or np.sum(V2.T@V2-np.eye(len(V2.T)))<10e-7
+        assert np.sum(V2 @ V1.T )<10e-7 or np.sum(V2.T@V1)<10e-7
+        assert np.sum(Vs @ V1.T) < 10e-7 or np.sum(Vs.T@V1)<10e-7
+        assert np.sum(V2 @ Vs.T) < 10e-7 or np.sum(V2.T@Vs)<10e-7
+
     # Include input scheduler params. currently not used
     scheduler_params = {'use_scheduler': True, 'factor': .5, 'min_lr': 5e-4, 'patience': 100, 'threshold': 1e-6,
                         'threshold_mode': 'rel'}
     x_shape = X.shape
     X = torch.tensor(X, dtype=torch.double)
-    model = CompModel(input_size=x_shape[2], hidden_size=R,want_bias=want_bias)  # do we want to
+    model = CompModel(input_size=x_shape[2], hidden_size=R,want_bias=want_bias,V_init=V_init)  # do we want to
     model.eval()  # "we don't want the weight the change"
     pre_train_hidden, pre_train_result, pre_train_matrices = model(
         X)  # we may need to use pre_train_hidden for analysis
@@ -238,8 +513,8 @@ if __name__ == '__main__':
     # zs1=np.zeros([sampling_rate * record_duration,R])
     # zs2 = np.zeros([sampling_rate * record_duration, R])
     # normal distribution centered at 0 with very smaller var
-    zs1 = np.random.normal(loc=0, scale=10e-2, size=(sampling_rate * record_duration, R))
-    zs2 = np.random.normal(loc=0, scale=10e-2, size=(sampling_rate * record_duration, R))
+    zs1 = np.random.normal(loc=0, scale=10e-1, size=(sampling_rate * record_duration, R))
+    zs2 = np.random.normal(loc=0, scale=10e-1, size=(sampling_rate * record_duration, R))
     z_rand = np.random.randn(sampling_rate * record_duration, R)
 
     # generate random orthogonal V and get V1, V2, V3 from it
@@ -266,11 +541,12 @@ if __name__ == '__main__':
 
     # make X
     X = np.array([X1, X2])
+    true_loss = my_loss(n2t(X1 @ V1), n2t(X1 @ Vs), n2t(X1 @ V2), n2t(X2 @ V1), n2t(X2 @ Vs), n2t(X2 @ V2), V1, Vs,
+                        V2, X1, X2).numpy()
 
     # train the model and calculate the true loss
     loss, hidden, reconstructed, matrices, model = fit_comp(X, R, lr=0.001, n_epochs=800)
-    true_loss = my_loss(n2t(X1 @ V1), n2t(X1 @ Vs), n2t(X1 @ V2), n2t(X2 @ V1), n2t(X2 @ Vs), n2t(X2 @ V2), V1, Vs,
-                        V2,X1,X2).numpy()
+
 
     # get the latent variable estimation
     z_hat = hidden[-1]
