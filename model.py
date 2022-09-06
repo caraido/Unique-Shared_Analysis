@@ -77,10 +77,9 @@ class CompModel(Module):
         self.V_init=V_init
         # here we create a V matrix to represent [v1,vs,v2]
         assert self.input_size > self.hidden_size
-        assert V_init[0].shape==(self.input_size,self.hidden_size)
-
 
         if self.V_init is not None:
+            assert V_init[0].shape == (self.input_size, self.hidden_size)
             self.V_init=np.concatenate(self.V_init,axis=1)
             VV=Linear(self.input_size, self.hidden_size * 3, bias=self.want_bias, dtype=torch.double)
             VV.weight=nn.Parameter(torch.DoubleTensor(self.V_init).T)
@@ -200,6 +199,7 @@ class Initialization:
         self._method=None
         self.method=method
         self.V=None
+        self.tracking=[]
 
     @property
     def method(self):
@@ -243,9 +243,11 @@ class UniqueSharedAnalysis:
             V1=[]
             Vs=[]
             V2=[]
+            all_V=[V1,Vs,V2]
             svd = TruncatedSVD(n_components=self.hidden_size)
 
             pick=1
+            tracking=[]
             for i in range(3*self.hidden_size):
                 if pick==1:
                     svd.fit(X1)
@@ -253,49 +255,34 @@ class UniqueSharedAnalysis:
                     svd.fit(X2)
                 pick*=-1
                 W=svd.components_[0,None].T
-                X1 = X1 - X1 @ W @ W.T
-                X2 = X2 - X2 @ W @ W.T
+
                 V1_pref=np.var(X1@W)-np.var(X2@W)
                 Vs_pref=np.std(X1@W)*np.std(X2@W)
                 #Vs_pref=(np.var(X1@W) + np.var(X2@W))/2
                 V2_pref=np.var(X2@W)-np.var(X1@W)
 
-                max_ind=np.argmax([V1_pref,Vs_pref,V2_pref])
-                if max_ind==0 and len(V1)<self.hidden_size:
-                    V1.append(np.squeeze(W))
-                elif max_ind==1 and len(Vs)<self.hidden_size:
-                    Vs.append(np.squeeze(W))
-                elif max_ind==2 and len(V2)<self.hidden_size:
-                    V2.append(np.squeeze(W))
-                elif max_ind==0 and len(V1)==self.hidden_size:
-                    max_ind=np.argmax([Vs_pref,V2_pref])
-                    if max_ind==0:
-                        Vs.append(np.squeeze(W))
-                    elif max_ind==1:
-                        Vs.append(np.squeeze(W))
-                elif max_ind==1 and len(Vs)==self.hidden_size:
-                    max_ind=np.argmax([V1_pref,V2_pref])
-                    if max_ind==0:
-                        V1.append(np.squeeze(W))
-                    elif max_ind==1:
-                        Vs.append(np.squeeze(W))
-                elif max_ind==2 and len(V2)==self.hidden_size:
-                    max_ind=np.argmax([V1_pref,Vs_pref])
-                    if max_ind==0:
-                        V1.append(np.squeeze(W))
-                    elif max_ind==1:
-                        Vs.append(np.squeeze(W))
-                else:
-                    raise Exception("how did you get this far?")
+                order = np.argsort([V1_pref, Vs_pref, V2_pref])[::-1]  # descending order
 
-            V1=np.array(V1).T
-            Vs=np.array(Vs).T
-            V2=np.array(V2).T
+                for o in order:
+                    if len(all_V[o])<self.hidden_size:
+                        all_V[o].append(W)
+                        tracking.append(o)
+                        break
+
+                X1 = X1 - X1 @ W @ W.T
+                X2 = X2 - X2 @ W @ W.T
+
+            self.initialization.tracking=tracking
+            print(tracking)
+
+            V1=np.concatenate(V1,axis=-1)
+            Vs=np.concatenate(Vs,axis=-1)
+            V2=np.concatenate(V2,axis=-1)
             # check orthogonality here
-            assert  np.sum(V1.T@V1-np.eye(self.hidden_size))<10e-10
+            assert np.sum(V1.T@V1-np.eye(self.hidden_size))<10e-10
             assert np.sum(V2.T @ V2 - np.eye(self.hidden_size))<10e-10
             assert np.sum(Vs.T @ Vs - np.eye(self.hidden_size))<10e-10
-            assert np.sum(V2.T @ V1 )<10e-10
+            assert np.sum(V2.T @ V1 ) < 10e-10
             assert np.sum(Vs.T @ V1) < 10e-10
             assert np.sum(V2.T @ Vs) < 10e-10
 
@@ -501,19 +488,12 @@ if __name__ == '__main__':
     record_duration = 5  # second
     sampling_rate = 100  # Hz
     num_neuron = 60  # for each trial type (what if the number of trial is different for each type?)
-    R = 1  # hidden dimension
+    R = 2  # hidden dimension
 
     # TODO: generate the data in the newly discussed method.
     # generate latent z
     z1 = np.random.normal(loc=0, scale=10e-1, size=(sampling_rate * record_duration, R))
     z2 = np.random.normal(loc=0, scale=10e-1, size=(sampling_rate * record_duration, R))
-    # standard normal distribition
-    # zs1 = np.random.randn(sampling_rate * record_duration,R)
-    # zs2 = np.random.randn(sampling_rate * record_duration, R)
-    # all zeros
-    # zs1=np.zeros([sampling_rate * record_duration,R])
-    # zs2 = np.zeros([sampling_rate * record_duration, R])
-    # normal distribution centered at 0 with very smaller var
     zs1 = np.random.normal(loc=0, scale=10e-1, size=(sampling_rate * record_duration, R))
     zs2 = np.random.normal(loc=0, scale=10e-1, size=(sampling_rate * record_duration, R))
     z_rand = np.random.randn(sampling_rate * record_duration, R)
@@ -546,85 +526,32 @@ if __name__ == '__main__':
                         V2, X1, X2).numpy()
 
     # train the model and calculate the true loss
-    loss, hidden, reconstructed, matrices, model = fit_comp(X, R, lr=0.001, n_epochs=800)
-
-
-    # get the latent variable estimation
-    z_hat = hidden[-1]
-    z1_hat = z_hat[0][0].detach().numpy()
-    zs1_hat = z_hat[0][1].detach().numpy()
-    z2_hat = z_hat[1][2].detach().numpy()
-    zs2_hat = z_hat[1][1].detach().numpy()
-
-    # get the transition matrices estimation
-    V_hat = matrices[-1]
-    V1_hat = V_hat[0].detach().numpy()
-    Vs_hat = V_hat[1].detach().numpy()
-    V2_hat = V_hat[2].detach().numpy()
-
-    # get the reconstruction data estimation
-    X_hat = reconstructed[-1]
-    X1V1V1_hat = X_hat[0][0].detach().numpy()
-    X1VsVs_hat = X_hat[0][1].detach().numpy()
-    X1V2V2_hat = X_hat[0][2].detach().numpy()
-
-    X2V1V1_hat = X_hat[1][0].detach().numpy()
-    X2VsVs_hat = X_hat[1][1].detach().numpy()
-    X2V2V2_hat = X_hat[1][2].detach().numpy()
-
-    # reconstruct the data
-    X1_hat = X1V1V1_hat + X1VsVs_hat
-    X2_hat = X2V2V2_hat + X2VsVs_hat
-
-    # (x1v1v1, x1vsvs, x1v2v2), (x2v1v1, x2vsvs, x2v2v2)
-    ########### post processing #############
-
-    # align the latent variables and transition matrix
-    z1_hat = -z1_hat if np.corrcoef(z1_hat.flatten(), z1.flatten())[0, -1] < 0 else z1_hat
-    zs1_hat = -zs1_hat if np.corrcoef(zs1_hat.flatten(), zs1.flatten())[0, -1] < 0 else zs1_hat
-    zs2_hat = -zs2_hat if np.corrcoef(zs2_hat.flatten(), zs2.flatten())[0, -1] < 0 else zs2_hat
-    z2_hat = -z2_hat if np.corrcoef(z2_hat.flatten(), z2.flatten())[0, -1] < 0 else z2_hat
-
-    V1_hat = -V1_hat if np.corrcoef(V1_hat.flatten(), V1.flatten())[0, -1] < 0 else V1_hat
-    Vs_hat = -Vs_hat if np.corrcoef(Vs_hat.flatten(), Vs.flatten())[0, -1] < 0 else Vs_hat
-    V2_hat = -V2_hat if np.corrcoef(V2_hat.flatten(), V2.flatten())[0, -1] < 0 else V2_hat
+    usa=UniqueSharedAnalysis(hidden_size=R)
+    usa.initialize(X)
+    usa.fit(X,n_epochs=1000)
+    epoch=-1
 
     # calculate the matrix norm of original vs estimate
-    z1_diff = np.linalg.norm(z1 - z1_hat) / (sampling_rate * record_duration * R)
-    z2_diff = np.linalg.norm(z2 - z2_hat) / (sampling_rate * record_duration * R)
-    zs1_diff = np.linalg.norm(zs1 - zs1_hat) / (sampling_rate * record_duration * R)
-    zs2_diff = np.linalg.norm(zs2 - zs2_hat) / (sampling_rate * record_duration * R)
+    z1_diff = np.linalg.norm(z1 - usa.latent_variables.x1v1[epoch]) / (sampling_rate * record_duration * R)
+    z2_diff = np.linalg.norm(z2 - usa.latent_variables.x2v2[epoch]) / (sampling_rate * record_duration * R)
+    zs1_diff = np.linalg.norm(zs1 - usa.latent_variables.x1vs[epoch]) / (sampling_rate * record_duration * R)
+    zs2_diff = np.linalg.norm(zs2 - usa.latent_variables.x2vs[epoch]) / (sampling_rate * record_duration * R)
 
-    V1_diff = np.linalg.norm(V1_hat - V1) / (R * num_neuron)
-    V2_diff = np.linalg.norm(V2_hat - V2) / (R * num_neuron)
-    Vs_diff = np.linalg.norm(Vs_hat - Vs) / (R * num_neuron)
+    V1_diff = np.linalg.norm(usa.transition_mat.V1[epoch] - V1) / (R * num_neuron)
+    V2_diff = np.linalg.norm(usa.transition_mat.V2[epoch] - V2) / (R * num_neuron)
+    Vs_diff = np.linalg.norm(usa.transition_mat.Vs[epoch] - Vs) / (R * num_neuron)
 
     ##### compare to random #######
-    z1_rand_diff = np.linalg.norm(z_rand - z1_hat) / (sampling_rate * record_duration * R)
-    z2_rand_diff = np.linalg.norm(z_rand - z2_hat) / (sampling_rate * record_duration * R)
-    zs1_rand_diff = np.linalg.norm(z_rand - zs1_hat) / (sampling_rate * record_duration * R)
-    zs2_rand_diff = np.linalg.norm(z_rand - zs2_hat) / (sampling_rate * record_duration * R)
+    z1_rand_diff = np.linalg.norm(z_rand - usa.latent_variables.x1v1[epoch]) / (sampling_rate * record_duration * R)
+    z2_rand_diff = np.linalg.norm(z_rand - usa.latent_variables.x2v2[epoch]) / (sampling_rate * record_duration * R)
+    zs1_rand_diff = np.linalg.norm(z_rand - usa.latent_variables.x1vs[epoch]) / (sampling_rate * record_duration * R)
+    zs2_rand_diff = np.linalg.norm(z_rand - usa.latent_variables.x2vs[epoch]) / (sampling_rate * record_duration * R)
 
-    V1_rand_diff = np.linalg.norm(V1_hat - V_rand) / (R * num_neuron)
-    V2_rand_diff = np.linalg.norm(V2_hat - V_rand) / (R * num_neuron)
-    Vs_rand_diff = np.linalg.norm(Vs_hat - V_rand) / (R * num_neuron)
+    V1_rand_diff = np.linalg.norm(usa.transition_mat.V1[epoch] - V_rand) / (R * num_neuron)
+    V2_rand_diff = np.linalg.norm(usa.transition_mat.V2[epoch] - V_rand) / (R * num_neuron)
+    Vs_rand_diff = np.linalg.norm(usa.transition_mat.Vs[epoch] - V_rand) / (R * num_neuron)
 
     # compare similarity between zs, zs_1_hat and zs_2_hat
-    print(
-        f"norm between zs_1_hat and zs_2_hat: {np.linalg.norm(zs1_hat - zs2_hat):.3f}")
-    print(
-        f"norm between z1(x1v1) and z1_hat: {np.linalg.norm(z1 - z1_hat):.3f}")
-    print(
-        f"norm between z2(x2v2) and z2_hat: {np.linalg.norm(z2 - z2_hat) :.3f}")
-    print(
-        f"norm between zs1(x1vs) and zs1_hat: {np.linalg.norm(zs1_hat - zs1):.3f}")
-    print(
-        f"norm between zs2(x2vs) and zs2_hat: {np.linalg.norm(zs2_hat - zs2):.3f}")
-
-    print(f"norm between V1 and V1_hat: {np.linalg.norm(V1_hat - V1):.3f}")
-    print(f"norm between V2 and V2_hat: {np.linalg.norm(V2_hat - V2):.3f}")
-    print(f"norm between Vs and Vs_hat: {np.linalg.norm(Vs_hat - Vs):.3f}")
-
     print(f"variance of X1:{np.var(X1)}")
     print(f"variance of X2:{np.var(X2)}")
 
@@ -632,19 +559,19 @@ if __name__ == '__main__':
     print(f'mean of X2: {np.mean(X2)}')
 
     print(f"true loss: {true_loss}")
-    print(f"estimated loss- true loss: {loss[-1] - true_loss}")
+    print(f"estimated loss- true loss: {usa.losses[epoch] - true_loss}")
     # plotting
 
     ### this is the boxplot for the latent variables
     z_original = np.array([z1, zs1, zs2, z2]).reshape(4, -1)
-    z_estimate = np.array([z1_hat, zs1_hat, zs2_hat, z2_hat]).reshape(4, -1)
+    z_estimate = np.array([usa.latent_variables.x1v1[epoch], usa.latent_variables.x1vs[epoch], usa.latent_variables.x2vs[epoch], usa.latent_variables.x2v2[epoch]]).reshape(4, -1)
     z_labels = ['z1', 'zs1', 'zs2', 'z2']
     group_boxplot(z_original, z_estimate, labels_list=z_labels, title='latent variables estimate comparison',
                   legend=['original', 'estimate'])
 
     ### this is the boxplot for transition matrix
     V_original = np.array([V1, Vs, V2]).reshape(3, -1)
-    V_estimate = np.array([V1_hat, Vs_hat, V2_hat]).reshape(3, -1)
+    V_estimate = np.array([usa.transition_mat.V1[epoch], usa.transition_mat.Vs[epoch], usa.transition_mat.V2[epoch]]).reshape(3, -1)
     V_labels = ['V1', 'Vs', 'V2']
     # group_boxplot(V_original, V_estimate, labels_list=V_labels, title='transition matrices estimate comparison',
     #              legend=['original', 'estimate'])
@@ -663,7 +590,7 @@ if __name__ == '__main__':
     ### these are the scatter plots to compare z, V and reconstruction
     group_scatter(V_original, V_estimate, V_labels, title='transition matrices estimate comparison')
     group_scatter(z_original, z_estimate, z_labels, title='latent variables estimate comparison')
-    group_scatter([X1.flatten(), X2.flatten()], [X1_hat.flatten(), X2_hat.flatten()], ['X1', 'X2'],
+    group_scatter([X1.flatten(), X2.flatten()], [usa.reconstruction_X1[epoch].flatten(), usa.reconstruction_X2[epoch].flatten()], ['X1', 'X2'],
                   title="reconstructed data comparison")
 
     ### plot individual loss difference (estimated loss vs ground truth loss)
@@ -675,28 +602,17 @@ if __name__ == '__main__':
     x2vs_true = X2 @ Vs
     x2v2_true = z2
 
-    var_x1v1 = [-np.var(z[0][0].detach().numpy()) + np.var(x1v1_true) for z in hidden]
-    var_x1vs = [-np.var(z[0][1].detach().numpy()) + np.var(x1vs_true) for z in hidden]
-    var_x1v2 = [-np.var(z[0][2].detach().numpy()) + np.var(x1v2_true) for z in hidden]
-    var_x2v1 = [-np.var(z[1][0].detach().numpy()) + np.var(x2v1_true) for z in hidden]
-    var_x2vs = [-np.var(z[1][1].detach().numpy()) + np.var(x2vs_true) for z in hidden]
-    var_x2v2 = [-np.var(z[1][2].detach().numpy()) + np.var(x2v2_true) for z in hidden]
 
-    var_x2vsvs = [np.var(z[1][2].detach().numpy() @ v[1].detach().numpy().T) for z, v in zip(hidden, matrices)]
-    var_x1vsvs = [np.var(z[0][1].detach().numpy() @ v[1].detach().numpy().T) for z, v in
-                  zip(hidden, matrices)]
-    var_x1v1v1 = [np.var(z[0][0].detach().numpy() @ v[0].detach().numpy().T) for z, v in zip(hidden, matrices)]
-    var_x2v2v2 = [np.var(z[1][2].detach().numpy() @ v[2].detach().numpy().T) for z, v in
-                  zip(hidden, matrices)]
+
 
     # plot individual loss
     plt.figure()
-    plt.plot(var_x1v1)
-    plt.plot(var_x1vs)
-    plt.plot(var_x1v2)
-    plt.plot(var_x2v1)
-    plt.plot(var_x2vs)
-    plt.plot(var_x2v2)
+    plt.plot(usa.latent_variables.var_x1v1)
+    plt.plot(usa.latent_variables.var_x1vs)
+    plt.plot(usa.latent_variables.var_x1v2)
+    plt.plot(usa.latent_variables.var_x2v1)
+    plt.plot(usa.latent_variables.var_x2vs)
+    plt.plot(usa.latent_variables.var_x2v2)
 
     plt.legend(['x1v1', 'x1vs', 'x1v2', 'x2v1', 'x2vs', 'x2v2'])
     plt.title('individual losses: true loss-estimated loss')
@@ -705,19 +621,15 @@ if __name__ == '__main__':
     plt.show()
 
     # plot individual loss for reconstruction
-    plt.plot(var_x1v1v1)
-    plt.plot(var_x1vsvs)
-
-    plt.plot(var_x2v2v2)
-    plt.plot(var_x2vsvs)
-    plt.legend(['z1v1', 'zs1vs', 'z2v2', 'zs2vs'])
-    plt.title('individual reconstruction losses: true loss-estimated loss')
-    plt.ylabel('var(true)-var(estimated)')
-    plt.xlabel('epoch')
+    plt.figure()
+    plt.plot(usa.X1_recon_MSE)
+    plt.plot(usa.X2_recon_MSE)
+    plt.legend(['X1', 'X2'])
+    plt.title('reconstruction MSE')
     plt.show()
 
     plt.figure()
-    plt.plot(loss)
+    plt.plot(usa.losses)
     plt.axhline(y=true_loss, color='red')
 
     plt.legend(['training loss', 'true loss'])

@@ -52,11 +52,17 @@ def preprocess_data(targ_array,move_array,all_array):
 
     return m1_tgt_concat,m1_move_concat,m1_all_concat
 
-
+def sort_helper(X:np.ndarray, sort_index=0):
+    dtype = [('value', np.ndarray), ('index', float)]
+    X=[(x,x[sort_index]) for x in X.T]
+    X= np.sort(np.array(X, dtype=dtype), order='index')[::-1]
+    X=np.array([x[0] for x in X]).T
+    return X
 
 if __name__=='__main__':
     from jPCA import jPCA
     from jPCA.util import plot_projections
+    import seaborn as sns
     # load the data first
     load_folder = '/Users/tianhaolei/PycharmProjects/mini_rotation_josh/'
     path=load_folder + 'monkey_n_avgs'
@@ -76,7 +82,7 @@ if __name__=='__main__':
     hidden_size=10
     USA=UniqueSharedAnalysis(hidden_size=hidden_size)
     USA.initialize(X,method='iter')
-    USA.fit(X)
+    USA.fit(X,n_epochs=800)
 
     all2V1=m1_all_concat.T@USA.transition_mat.V1[-1]
     all2V2=m1_all_concat.T@USA.transition_mat.V2[-1]
@@ -121,6 +127,57 @@ if __name__=='__main__':
     plt.legend(['preparatory', 'movement'])
     plt.title('reconstruction MSE')
     plt.show()
+
+    # plot individual variance across different component
+    dtype = [('value', np.ndarray), ('first variance', float)]
+    var_x1v1_ind=np.array([np.var(x,axis=0) for x in USA.latent_variables.x1v1])
+    var_x1v1_ind=sort_helper(var_x1v1_ind,0)
+
+    var_x1vs_ind=np.array([np.var(x,axis=0) for x in USA.latent_variables.x1vs])
+    var_x1vs_ind=sort_helper(var_x1vs_ind,0)
+
+    var_x1v2_ind=np.array([np.var(x,axis=0) for x in USA.latent_variables.x1v2])
+    var_x1v2_ind=sort_helper(var_x1v2_ind,0)
+
+    var_x2v1_ind=np.array([np.var(x,axis=0) for x in USA.latent_variables.x2v1])
+    var_x2v1_ind=sort_helper(var_x2v1_ind,0)
+
+    var_x2vs_ind=np.array([np.var(x,axis=0) for x in USA.latent_variables.x2vs])
+    var_x2vs_ind=sort_helper(var_x2vs_ind,0)
+
+    var_x2v2_ind=np.array([np.var(x,axis=0) for x in USA.latent_variables.x2v2])
+    var_x2v2_ind=sort_helper(var_x2v2_ind,0)
+
+    fig_ind,ax=plt.subplots(2,3,figsize=(10,6))
+    # create colormap
+    cm = plt.cm.magma(np.linspace(0, 1, USA.hidden_size))
+    ax[0][0].set_prop_cycle('color', list(cm))
+    ax[0][0].plot(var_x1v1_ind)
+    ax[0][0].set_title('x1v1')
+
+    ax[0][1].set_prop_cycle('color', list(cm))
+    ax[0][1].plot(var_x1vs_ind)
+    ax[0][1].set_title('x1vs')
+
+    ax[0][2].set_prop_cycle('color', list(cm))
+    ax[0][2].plot(var_x1v2_ind)
+    ax[0][2].set_title('x1v2')
+
+    ax[1][0].set_prop_cycle('color', list(cm))
+    ax[1][0].plot(var_x2v1_ind)
+    ax[1][0].set_title('x2v1')
+
+    ax[1][1].set_prop_cycle('color', list(cm))
+    ax[1][1].plot(var_x2vs_ind)
+    ax[1][1].set_title('x2vs')
+
+    ax[1][2].set_prop_cycle('color', list(cm))
+    ax[1][2].plot(var_x2v2_ind)
+    ax[1][2].legend([str(i+1) for i in range(USA.hidden_size)],loc='center left', bbox_to_anchor=(1, 0.5))
+    ax[1][2].set_title('x2v2')
+    plt.tight_layout()
+    plt.show()
+
 
     # plot the data
     c_size=0.01
