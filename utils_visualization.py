@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+def quick_subplots(data, ):
+    pass
+
 def set_box_color(bp, color):
     plt.setp(bp['boxes'], color=color)
     plt.setp(bp['whiskers'], color=color)
@@ -103,4 +106,59 @@ def group_scatter(data_group1,data_group2,labels,title):
     plt.tight_layout()
     plt.show()
 
+def all_var_bars(x1v1,x1vs,x1v2,x2v1,x2vs,x2v2):
+    '''
+    all inputs should be a time series x hidden size or 1 x hidden size
+    :return:
+    '''
+    assert x1v1.shape==x1vs.shape==x1v2.shape==x2v1.shape==x2vs.shape==x2v2.shape
+    if len(x1v1.shape)==1:
+        x1v1=x1v1[None,:]
+        x1vs = x1vs[None, :]
+        x1v2 = x1v2[None, :]
+        x2v1=x2v1[None,:]
+        x2vs = x2vs[None, :]
+        x2v2 = x2v2[None, :]
 
+    x1v1=x1v1[-1,:]
+    x1vs = x1vs[-1, :]
+    x1v2 = x1v2[-1, :]
+    x2v1=x2v1[-1,:]
+    x2vs = x2vs[-1, :]
+    x2v2 = x2v2[-1, :]
+    hidden_size=len(x1v1)
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 5))
+
+    x_pos = np.arange(hidden_size)
+    fig.suptitle("varaince of individual variance at last epoch")
+    ax1.bar(x_pos, x1v1, color='r')
+    x_pos = np.arange(hidden_size) + hidden_size + 1
+    ax1.bar(x_pos, x1vs, color='b')
+    x_pos = np.arange(hidden_size) + 2 * hidden_size + 2
+    ax1.bar(x_pos, x1v2, color='g')
+    ax1.set_ylabel('variance')
+    ax1.legend(['x1v1', 'x1vs', 'x1v2'])
+    ax1.tick_params(
+        axis='x',  # changes apply to the x-axis
+        which='both',  # both major and minor ticks are affected
+        bottom=False,  # ticks along the bottom edge are off
+        top=False,  # ticks along the top edge are off
+        labelbottom=False)  # labels along the bottom edge are off
+    # ax1.tittle('individual var(X1) at last epoch')
+    x_pos = np.arange(hidden_size)
+    ax2.bar(x_pos, x2v1, color='r')
+    x_pos = np.arange(hidden_size) + hidden_size + 1
+    ax2.bar(x_pos, x2vs, color='b')
+    x_pos = np.arange(hidden_size) + 2 * hidden_size + 2
+    ax2.bar(x_pos, x2v2, color='g')
+    ax2.legend(['x2v1', 'x2vs', 'x2v2'])
+    ax2.set_ylabel('variance')
+    ax2.tick_params(
+        axis='x',  # changes apply to the x-axis
+        which='both',  # both major and minor ticks are affected
+        bottom=False,  # ticks along the bottom edge are off
+        top=False,  # ticks along the top edge are off
+        labelbottom=False)  # labels along the bottom edge are off
+
+    plt.show()
