@@ -76,7 +76,7 @@ class CompModel(Module):
         self.want_bias=want_bias
         self.V_init=V_init
         # here we create a V matrix to represent [v1,vs,v2]
-        assert self.input_size > self.hidden_size
+        assert self.input_size >= self.hidden_size
 
         if self.V_init is not None:
             assert V_init[0].shape == (self.input_size, self.hidden_size)
@@ -146,12 +146,18 @@ class CompModel(Module):
 
 class LatentVariables:
     def __init__(self,hidden):
-        self.x1v1 = [z[0][0].detach().numpy() for z in hidden]
-        self.x1vs = [z[0][1].detach().numpy() for z in hidden]
-        self.x1v2 = [z[0][2].detach().numpy() for z in hidden]
-        self.x2v1 = [z[1][0].detach().numpy() for z in hidden]
-        self.x2vs = [z[1][1].detach().numpy() for z in hidden]
-        self.x2v2 = [z[1][2].detach().numpy() for z in hidden]
+        # self.x1v1 = [np.float(z[0][0].detach().numpy()) for z in hidden]
+        # self.x1vs = [np.float(z[0][1].detach().numpy()) for z in hidden]
+        # self.x1v2 = [np.float(z[0][2].detach().numpy()) for z in hidden]
+        # self.x2v1 = [np.float(z[1][0].detach().numpy()) for z in hidden]
+        # self.x2vs = [np.float(z[1][1].detach().numpy()) for z in hidden]
+        # self.x2v2 = [np.float(z[1][2].detach().numpy()) for z in hidden]
+        self.x1v1 = [z[0][0] for z in hidden]
+        self.x1vs = [z[0][1] for z in hidden]
+        self.x1v2 = [z[0][2] for z in hidden]
+        self.x2v1 = [z[1][0] for z in hidden]
+        self.x2vs = [z[1][1] for z in hidden]
+        self.x2v2 = [z[1][2] for z in hidden]
 
         self.var_x1v1=[np.var(h) for h in self.x1v1]
         self.var_x1vs = [np.var(h) for h in self.x1vs]
@@ -164,12 +170,18 @@ class LatentVariables:
 class Reconstructed:
     def __init__(self,reconstructed):
         #((x1v1v1, x1vsvs, x1v2v2), (x2v1v1, x2vsvs, x2v2v2))
-        self.X1V1V1=[r[0][0].detach().numpy() for r in reconstructed]
-        self.X1VsVs = [r[0][1].detach().numpy() for r in reconstructed]
-        self.X1V2V2 = [r[0][2].detach().numpy() for r in reconstructed]
-        self.X2V1V1 = [r[1][0].detach().numpy() for r in reconstructed]
-        self.X2VsVs = [r[1][1].detach().numpy() for r in reconstructed]
-        self.X2V2V2 = [r[1][2].detach().numpy() for r in reconstructed]
+        #self.X1V1V1=[np.float(r[0][0].detach().numpy()) for r in reconstructed]
+        #self.X1VsVs = [np.float(r[0][1].detach().numpy()) for r in reconstructed]
+        #self.X1V2V2 = [np.float(r[0][2].detach().numpy()) for r in reconstructed]
+        #self.X2V1V1 = [np.float(r[1][0].detach().numpy()) for r in reconstructed]
+        #self.X2VsVs = [np.float(r[1][1].detach().numpy()) for r in reconstructed]
+        #self.X2V2V2 = [np.float(r[1][2].detach().numpy()) for r in reconstructed]
+        self.X1V1V1=[r[0][0] for r in reconstructed]
+        self.X1VsVs = [r[0][1] for r in reconstructed]
+        self.X1V2V2 = [r[0][2] for r in reconstructed]
+        self.X2V1V1 = [r[1][0] for r in reconstructed]
+        self.X2VsVs = [r[1][1] for r in reconstructed]
+        self.X2V2V2 = [r[1][2] for r in reconstructed]
 
         self.X1 = [self.X1VsVs[i]+self.X1V1V1[i] for i in
                                  range(len(reconstructed))]
@@ -190,9 +202,13 @@ class Reconstructed:
 class TransitionMat:
     def __init__(self,mat):
         #(V1_weight, Vs_weight, V2_weight)
-        self.V1=[v[0].detach().numpy() for v in mat]
-        self.Vs = [v[1].detach().numpy() for v in mat]
-        self.V2 = [v[2].detach().numpy() for v in mat]
+        #self.V1=[np.float(v[0].detach().numpy()) for v in mat]
+        #self.Vs = [np.float(v[1].detach().numpy()) for v in mat]
+        #self.V2 = [np.float(v[2].detach().numpy()) for v in mat]
+        self.V1=mat[0]
+        self.Vs=mat[1]
+        self.V2=mat[2]
+
 
 class Initialization:
     def __init__(self,method=None):
@@ -311,20 +327,21 @@ class UniqueSharedAnalysis:
             self.run=True
 
             self.losses=loss
+            #del loss
             self.latent_variables=LatentVariables(hidden)
-            del hidden # to save the memory
+            #del hidden # to save the memory
             self.reconstructed=Reconstructed(reconstructed)
-            del reconstructed # to save the memory
+            #del reconstructed # to save the memory
             self.transition_mat=TransitionMat(matrices)
-            del matrices # to save the memory
+            #del matrices # to save the memory
             self.model=model
 
             if self._want_stats:
                 self._calculate_stats()
 
-            print(f"Original total loss:{loss[0]:.2f}. ")
+            print(f"Original total loss:{self.losses[0]:.2f}. ")
             print('### after training ###')
-            print(f"Last epoch total loss:{loss[-1]:.2f}. ")
+            print(f"Last epoch total loss:{self.losses[-1]:.2f}. ")
         else:
             raise Exception("input data should be a 3 dimensional ndarray/tensor with first D=2 .")
 
@@ -352,20 +369,20 @@ class UniqueSharedAnalysis:
         if isinstance(data,np.ndarray):
             size=data.shape
             if size[0]==2 and len(size)==3:
-                self.raw_data_size=size
+                self._raw_data_size=size
                 return True
             else: return False
         elif isinstance(data,torch.Tensor):
             size=data.size()
             if size[0]==2 and len(size)==3:
-                self.raw_data_size=size
+                self._raw_data_size=size
                 data=data.detach().numpy()
                 warnings.warn(f"Preferred numpy array data type but got {data.type()}. Now transforming to numpy array")
                 return True
             else: return False
         elif isinstance(data,list):
-            if len(data)==2 and data[0].shape==data[1].shape:
-                self.raw_data_size=(2,data[0].shape[0],data[0].shape[1])
+            if len(data)==2 :
+                self._raw_data_size=(data[0].shape,data[1].shape)
                 return True
             else:
                 return False
@@ -388,13 +405,13 @@ class UniqueSharedAnalysis:
         return self._n_epochs
 
 
-def fit_comp(X: np.ndarray, R=None, V_init:list=None, lr=0.001, n_epochs=1000,want_bias=False):
+def fit_comp(X, R=None, V_init:list=None, lr=0.001, n_epochs=1000,want_bias=False):
     """
         Wrapper function for fitting the neural signal comparison model
         Parameters
         ----------
         X: the input neural data (required)
-
+            usually include [X1, X2] with shape of X1: time1 x n_neuron, X2: time2 x n_neuron. time1 and time2 may be equal
         R: dimensionality of the latent (required)
            scalar
         V_init: initialized V, need to check orthogonality
@@ -429,9 +446,14 @@ def fit_comp(X: np.ndarray, R=None, V_init:list=None, lr=0.001, n_epochs=1000,wa
     # Include input scheduler params. currently not used
     scheduler_params = {'use_scheduler': True, 'factor': .5, 'min_lr': 5e-4, 'patience': 100, 'threshold': 1e-6,
                         'threshold_mode': 'rel'}
-    x_shape = X.shape
-    X = torch.tensor(X, dtype=torch.double)
-    model = CompModel(input_size=x_shape[2], hidden_size=R,want_bias=want_bias,V_init=V_init)  # do we want to
+
+    X1_input_size=X[0].shape
+    X2_input_size=X[1].shape
+    assert X1_input_size[1]==X2_input_size[1]
+    input_size=X1_input_size[1]
+
+    X = [torch.tensor(X[0], dtype=torch.double),torch.tensor(X[1], dtype=torch.double)]
+    model = CompModel(input_size=input_size, hidden_size=R,want_bias=want_bias,V_init=V_init)  # do we want to
     model.eval()  # "we don't want the weight the change"
     pre_train_hidden, pre_train_result, pre_train_matrices = model(
         X)  # we may need to use pre_train_hidden for analysis
@@ -456,7 +478,11 @@ def fit_comp(X: np.ndarray, R=None, V_init:list=None, lr=0.001, n_epochs=1000,wa
 
     # start training with the same data
     losses = np.zeros(n_epochs + 1)  # Save loss at each training epoch
-    losses[0] = pre_train_loss
+    losses[0] = np.float(pre_train_loss)
+    pre_train_hidden = [[h.detach().numpy().astype(np.float32) for h in hid] for hid in pre_train_hidden]
+    pre_train_matrices = [mat.detach().numpy().astype(np.float32) for mat in pre_train_matrices]
+    pre_train_result = [[r.detach().numpy().astype(np.float32) for r in rst] for rst in pre_train_result]
+
     hiddens = []
     hiddens.append(pre_train_hidden)
     matrices_all = []
@@ -480,7 +506,12 @@ def fit_comp(X: np.ndarray, R=None, V_init:list=None, lr=0.001, n_epochs=1000,wa
 
         loss.backward()
         optimizer.step()
-        losses[e + 1] = loss
+
+        hidden=[[h.detach().numpy().astype(np.float32) for h in hid] for hid in hidden]
+        matrices = [mat.detach().numpy().astype(np.float32) for mat in matrices]
+        result = [[r.detach().numpy().astype(np.float32) for r in rst] for rst in result]
+
+        losses[e + 1] = np.float(loss)
         hiddens.append(hidden)
         matrices_all.append(matrices)
         results.append(result)
@@ -612,9 +643,6 @@ if __name__ == '__main__':
     x2v1_true = X2 @ V1
     x2vs_true = X2 @ Vs
     x2v2_true = z2
-
-
-
 
     # plot individual loss
     plt.figure()

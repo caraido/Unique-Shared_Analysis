@@ -120,6 +120,7 @@ def all_var_bars(x1v1,x1vs,x1v2,x2v1,x2vs,x2v2):
         x2vs = x2vs[None, :]
         x2v2 = x2v2[None, :]
 
+    # take the last epoch only
     x1v1=x1v1[-1,:]
     x1vs = x1vs[-1, :]
     x1v2 = x1v2[-1, :]

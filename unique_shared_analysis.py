@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import scipy.stats as stats
 from scipy import io
 import torch
-from model import *
+from model import UniqueSharedAnalysis
 from utils_visualization import *
 
 def load_data(path):
@@ -80,12 +80,30 @@ def sort_helper(X:np.ndarray, sort_index=0):
     X=np.array([x[0] for x in X]).T
     return X
 
+def sort_helper_ref(X:np.ndarray, sort_ref, ascending=False):
+    # X should be a 2 dimensional data with the first dimension or the last dimension equal to the length of sort reference
+    assert X.shape[0]==len(sort_ref) or X.shape[-1]==len(sort_ref)
+    dtype = [('value', np.ndarray), ('index', float)]
+    if X.shape[-1]==len(sort_ref):
+        X=X.T
+    X = [(x, sort_ref[i]) for i, x in enumerate(X)]
+    if ascending:
+        X=np.sort(np.array(X, dtype=dtype), order='index')
+    else:
+        X= np.sort(np.array(X, dtype=dtype), order='index')[::-1]
+    if X.shape[-1]==len(sort_ref):
+        X=np.array([x[0] for x in X]).T
+    else:
+        X=np.array([x[0] for x in X])
+    return X
+
+# Using monkey data to demonstrate USA analysis.
 if __name__=='__main__':
     from jPCA import jPCA
     from jPCA.util import plot_projections
     import seaborn as sns
     # load the data first
-    load_folder = '/Users/tianhaolei/PycharmProjects/mini_rotation_josh/'
+    load_folder = '/Users/tianhaolei/PycharmProjects/mini_rotation_josh/examples/'
     path=load_folder + 'monkey_n_avgs'
     targ_array,move_array,all_array=load_data(path)
     targ_array=np.concatenate([targ_array,move_array],axis=2)
@@ -110,7 +128,7 @@ if __name__=='__main__':
     hidden_size=10
     USA=UniqueSharedAnalysis(hidden_size=hidden_size)
     USA.initialize(X,method='iter')
-    USA.fit(X,n_epochs=800)
+    USA.fit(X,n_epochs=8)
 
     #all2V1=X_all.T@USA.transition_mat.V1[-1]
     #all2V2=X_all.T@USA.transition_mat.V2[-1]
